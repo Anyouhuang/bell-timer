@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>11·12·15 鈴響計時</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eef1f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e141b" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="鈴響計時">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@600;800&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* 版面：一屏式舞台計時器，直放上下堆疊、橫放左時鐘右按鈕；銅鈴色為唯一強調色 */
+  :root {
+    --bg: #eef1f4; --panel: #ffffff; --fg: #16202b; --muted: #5d6875;
+    --line: #d3d9e0; --accent: #9a6a12; --on-accent: #ffffff; --accent-soft: #f6e7c8;
+    --ok: #157a42; --warn: #b05a00; --stop: #b42318;
+    --font-num: "Azeret Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e141b; --panel: #17202a; --fg: #e7ecf1; --muted: #93a0ad;
+      --line: #2a3542; --accent: #e3b35a; --on-accent: #1a1306; --accent-soft: #3b2c10;
+      --ok: #4fd18b; --warn: #f5b041; --stop: #ff7b6b; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e141b; --panel: #17202a; --fg: #e7ecf1; --muted: #93a0ad;
+    --line: #2a3542; --accent: #e3b35a; --on-accent: #1a1306; --accent-soft: #3b2c10;
+    --ok: #4fd18b; --warn: #f5b041; --stop: #ff7b6b; color-scheme: dark;
+  }
+
+  html, body { margin: 0; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--font-body);
+    display: flex; align-items: center; justify-content: center;
+    padding-block: max(20px, env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    touch-action: manipulation; -webkit-user-select: none; user-select: none;
+    overscroll-behavior: none;
+  }
+  body.ringing { animation: flash .5s steps(1) infinite; }
+  @keyframes flash { 50% { background: var(--accent-soft); } }
+  @media (prefers-reduced-motion: reduce) {
+    body.ringing { animation: none; background: var(--accent-soft); }
+  }
+
+  main { width: 100%; max-width: 720px; display: flex; flex-direction: column; gap: 22px; text-align: center; }
+  .left, .right { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+  .label { margin: 0; font-size: 14px; color: var(--muted); letter-spacing: .14em; }
+  .clock {
+    margin: 0; font-family: var(--font-num); font-weight: 800;
+    font-size: min(25vw, 188px); line-height: 1; letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  body.phase-1 .clock { color: var(--ok); }
+  body.phase-2 .clock { color: var(--warn); }
+  body.phase-3 .clock { color: var(--stop); }
+  .sub { margin: 0; font-size: 16px; color: var(--muted); min-height: 1.5em; font-variant-numeric: tabular-nums; }
+  .sub.alert { color: var(--stop); font-weight: 700; }
+
+  .track { position: relative; height: 8px; margin: 8px 6px 0; border-radius: 4px; background: var(--line); }
+  .fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 4px; background: var(--accent); }
+  .tick { position: absolute; top: -6px; width: 2px; height: 20px; background: var(--fg); transform: translateX(-1px); border-radius: 1px; }
+
+  .bells { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 8px; }
+  .bell { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 4px; }
+  .bell .t { font-family: var(--font-num); font-weight: 600; font-size: 19px; font-variant-numeric: tabular-nums; }
+  .bell .s { margin-top: 4px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bell.done { background: var(--accent-soft); border-color: var(--accent); }
+  .bell.done .s { color: var(--fg); font-weight: 700; }
+
+  .controls { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+  button {
+    font: inherit; font-size: 20px; font-weight: 700; cursor: pointer;
+    border: 0; border-radius: 14px; min-height: 64px; padding: 0 14px;
+    background: var(--accent); color: var(--on-accent);
+  }
+  button:active { transform: scale(.98); }
+  button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+  button.ghost { background: var(--panel); color: var(--fg); border: 1px solid var(--line); font-weight: 500; }
+  button.ghost.confirm { background: var(--stop); color: var(--on-accent); border-color: var(--stop); font-weight: 700; font-size: 16px; }
+  button.small { min-height: 48px; font-size: 15px; font-weight: 500; }
+
+  .note {
+    margin: 0; padding: 10px 12px; text-align: left; font-size: 13px; line-height: 1.65; color: var(--muted);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  }
+  .note b { color: var(--fg); }
+  .keys { display: none; }
+  @media (hover: hover) and (pointer: fine) { .keys { display: inline; } }
+
+  @media (orientation: landscape) and (max-height: 520px) {
+    main { max-width: 980px; display: grid; grid-template-columns: 1.25fr 1fr; gap: 24px; align-items: center; }
+    .clock { font-size: min(17vw, 52vh); }
+    .note { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <section class="left" aria-label="計時">
+    <p class="label" id="label">距結束剩餘</p>
+    <p class="clock" id="clock" aria-live="off">15:00</p>
+    <p class="sub" id="sub">按「開始」計時</p>
+    <div class="track" id="track"><div class="fill" id="fill"></div></div>
+  </section>
+
+  <section class="right" aria-label="控制">
+    <div class="bells" id="bells"></div>
+    <div class="controls">
+      <button id="start" type="button">開始</button>
+      <button id="reset" type="button" class="ghost">重設</button>
+    </div>
+    <button id="test" type="button" class="ghost small">試聽鈴聲（使用前先按一次）</button>
+    <p class="note">
+      計時中請<b>讓這個頁面停在螢幕上</b>，頁面會自動防止螢幕變暗。手機鎖定螢幕或切到別的 App 時，瀏覽器會暫停，鈴聲不會響。
+      <span class="keys">鍵盤：空白鍵開始／暫停，R 重設。</span>
+    </p>
+  </section>
+</main>
+
+<script>
+(() => {
+  // 鈴響時間（分鐘）
+  const BELLS_MIN = [11, 12, 15];
+  const RING_SECONDS = 1.5;
+  const STORE_KEY = "bell-timer-state";
+
+  const $ = id => document.getElementById(id);
+  const bells = BELLS_MIN.map(m => Math.round(m * 60));
+  const total = bells[bells.length - 1];
+
+  let elapsedBefore = 0;   // 暫停前累積秒數
+  let startedAt = null;    // Date.now() 起點；暫停時為 null
+  let rung = new Set();
+  let ctx = null, scheduled = [], anchor = null, wakeLock = null, resetArmed = null;
+
+  const now = () => Date.now();
+  const elapsed = () => elapsedBefore + (startedAt === null ? 0 : (now() - startedAt) / 1000);
+  const fmt = s => {
+    const neg = s < 0; s = Math.abs(Math.floor(s));
+    return (neg ? "+" : "") + String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  };
+
+  function save() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ elapsedBefore, startedAt, rung: [...rung], bells })); } catch {}
+  }
+  function load() {
+    try {
+      const s = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+      if (s && JSON.stringify(s.bells) === JSON.stringify(bells)) {
+        elapsedBefore = s.elapsedBefore || 0;
+        startedAt = s.startedAt ?? null;
+        rung = new Set(s.rung || []);
+      }
+    } catch {}
+  }
+
+  // ===== 介面 =====
+  document.documentElement.style.setProperty("--n", bells.length);
+  bells.forEach((b, i) => {
+    $("track").insertAdjacentHTML("beforeend", `<div class="tick" style="left:${b / total * 100}%"></div>`);
+    $("bells").insertAdjacentHTML("beforeend",
+      `<div class="bell" id="bell${i}"><div class="t">${fmt(b)}</div><div class="s" id="bs${i}">第 ${i + 1} 次</div></div>`);
+  });
+
+  // ===== 聲音（瀏覽器即時合成，不需音檔） =====
+  function audio() {
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch {}
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      ctx.onstatechange = () => { if (ctx.state === "running" && startedAt !== null) scheduleRemaining(); };
+    }
+    if (ctx.state !== "running") ctx.resume().catch(() => {});
+    return ctx;
+  }
+  function unlock() {
+    const c = audio();
+    const b = c.createBuffer(1, 1, 22050);
+    const s = c.createBufferSource();
+    s.buffer = b; s.connect(c.destination); s.start(0);
+  }
+
+  function scheduleRing(t0) {
+    const c = audio();
+    const nodes = [];
+    const master = c.createGain();
+    master.gain.setValueAtTime(0.0001, t0);
+    master.gain.linearRampToValueAtTime(1.0, t0 + 0.01);
+    master.gain.setValueAtTime(1.0, t0 + RING_SECONDS - 0.15);
+    master.gain.linearRampToValueAtTime(0.0001, t0 + RING_SECONDS);
+    master.connect(c.destination);
+    nodes.push(master);
+    const partials = [[1, 0.55], [2.0, 0.28], [2.76, 0.2], [5.4, 0.08]];
+    const base = 1046.5, every = 0.25;
+    for (let st = 0; st < RING_SECONDS - 0.05; st += every) {
+      const ts = t0 + st;
+      partials.forEach(([r, a]) => {
+        const o = c.createOscillator(), g = c.createGain();
+        o.frequency.value = base * r;
+        g.gain.setValueAtTime(0.0001, ts);
+        g.gain.exponentialRampToValueAtTime(a, ts + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0001, ts + every * 1.6);
+        o.connect(g).connect(master);
+        o.start(ts);
+        o.stop(Math.min(ts + every * 1.7, t0 + RING_SECONDS + 0.02));
+        nodes.push(o, g);
+      });
+    }
+    return nodes;
+  }
+  function cancelScheduled() {
+    scheduled.forEach(n => { try { n.stop && n.stop(); } catch {} try { n.disconnect(); } catch {} });
+    scheduled = [];
+  }
+  function scheduleRemaining() {
+    cancelScheduled();
+    if (startedAt === null || !ctx) return;
+    if (ctx.state !== "running") { audio(); return; }
+    const e = elapsed();
+    anchor = { wall: now(), audio: ctx.currentTime };
+    bells.forEach((b, i) => {
+      if (rung.has(i)) return;
+      const delay = b - e;
+      if (delay < -RING_SECONDS) return;
+      scheduled.push(...scheduleRing(ctx.currentTime + Math.max(0.02, delay)));
+    });
+  }
+  function driftCheck() {
+    if (!ctx || !anchor || startedAt === null) return;
+    const drift = (now() - anchor.wall) / 1000 - (ctx.currentTime - anchor.audio);
+    if (ctx.state !== "running") audio();
+    else if (Math.abs(drift) > 0.3) scheduleRemaining();
+  }
+
+  // ===== 控制 =====
+  async function keepAwake() {
+    try {
+      if ("wakeLock" in navigator && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", () => { wakeLock = null; });
+      }
+    } catch {}
+  }
+  function releaseAwake() { try { wakeLock?.release(); } catch {} }
+
+  function start() {
+    if (startedAt !== null) return;
+    unlock();
+    startedAt = now();
+    save();
+    setTimeout(scheduleRemaining, 30);
+    keepAwake();
+    updateButtons();
+  }
+  function pause() {
+    if (startedAt === null) return;
+    elapsedBefore = elapsed();
+    startedAt = null;
+    cancelScheduled();
+    save();
+    releaseAwake();
+    updateButtons();
+  }
+  function doReset() {
+    cancelScheduled();
+    startedAt = null; elapsedBefore = 0; rung = new Set();
+    save();
+    releaseAwake();
+    disarmReset();
+    updateButtons();
+  }
+  // 計時中或已計時一段時間：按兩次才重設，避免誤觸
+  function disarmReset() {
+    clearTimeout(resetArmed); resetArmed = null;
+    $("reset").classList.remove("confirm");
+    $("reset").textContent = "重設";
+  }
+  function requestReset() {
+    if (startedAt === null && elapsedBefore < 30) return doReset();
+    if (resetArmed) return doReset();
+    $("reset").classList.add("confirm");
+    $("reset").textContent = "再按確認";
+    resetArmed = setTimeout(disarmReset, 3000);
+  }
+  function updateButtons() {
+    $("start").textContent = startedAt !== null ? "暫停" : elapsedBefore > 0 ? "繼續" : "開始";
+  }
+
+  $("start").addEventListener("click", () => (startedAt === null ? start() : pause()));
+  $("reset").addEventListener("click", requestReset);
+  $("test").addEventListener("click", () => {
+    unlock();
+    const n = scheduleRing(audio().currentTime + 0.05);
+    if (startedAt !== null) scheduled.push(...n);
+    try { navigator.vibrate?.([300, 150, 300]); } catch {}
+  });
+  document.addEventListener("keydown", e => {
+    if (e.code === "Space") { e.preventDefault(); $("start").click(); }
+    if (e.key === "r" || e.key === "R") requestReset();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && startedAt !== null) { audio(); keepAwake(); scheduleRemaining(); }
+  });
+  // 重新整理或從背景回來後，瀏覽器要求再點一下才能出聲
+  document.addEventListener("pointerdown", () => {
+    if (startedAt !== null && (!ctx || ctx.state !== "running")) { unlock(); keepAwake(); setTimeout(scheduleRemaining, 50); }
+  }, true);
+
+  // ===== 畫面更新 =====
+  let lastDrift = 0;
+  function render() {
+    const e = elapsed();
+    let ringing = false;
+    bells.forEach((b, i) => {
+      if (e >= b && !rung.has(i)) {
+        rung.add(i); save();
+        if (startedAt !== null && e < b + RING_SECONDS) { try { navigator.vibrate?.([800, 200, 800, 200, 800]); } catch {} }
+      }
+      if (startedAt !== null && e >= b && e < b + RING_SECONDS) ringing = true;
+      const done = rung.has(i);
+      $("bell" + i).classList.toggle("done", done);
+      $("bs" + i).textContent = done ? "已響" : "剩 " + fmt(Math.ceil(b - e));
+    });
+    document.body.classList.toggle("ringing", ringing);
+
+    const remain = total - e;
+    $("clock").textContent = remain >= 0 ? fmt(Math.ceil(remain)) : fmt(remain);
+    $("label").textContent = remain >= 0 ? "距結束剩餘" : "已超時";
+    const next = bells.find(b => b > e);
+    const needTap = startedAt !== null && (!ctx || ctx.state !== "running");
+    $("sub").classList.toggle("alert", needTap);
+    $("sub").textContent =
+      startedAt === null && e === 0 ? "按「開始」計時" :
+      startedAt === null ? `已暫停　·　已經過 ${fmt(e)}` :
+      needTap ? "點一下畫面以啟用鈴聲" :
+      next !== undefined ? `已經過 ${fmt(e)}　·　下次鈴響 ${fmt(next)}` :
+      `已經過 ${fmt(e)}　·　鈴聲已全部響完`;
+
+    for (const k of [1, 2, 3]) document.body.classList.remove("phase-" + k);
+    if (startedAt !== null || e > 0) document.body.classList.add("phase-" + Math.min(rung.size + 1, 3));
+    $("fill").style.width = Math.min(100, e / total * 100) + "%";
+
+    if (performance.now() - lastDrift > 1000) { lastDrift = performance.now(); driftCheck(); }
+    requestAnimationFrame(render);
+  }
+
+  load();
+  updateButtons();
+  render();
+})();
+</script>
+</body>
+</html>

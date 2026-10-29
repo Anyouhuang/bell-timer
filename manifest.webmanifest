@@ -1,0 +1,10 @@
+{
+  "name": "11·12·15 鈴響計時",
+  "short_name": "鈴響計時",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0e141b",
+  "theme_color": "#9a6a12",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
