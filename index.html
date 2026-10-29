@@ -38,8 +38,9 @@
 
   html, body { margin: 0; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; }
+  html { height: 100%; }
   body {
+    min-height: 100%;
     background: var(--bg); color: var(--fg); font-family: var(--font-body);
     display: flex; align-items: center; justify-content: center;
     padding-block: max(20px, env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-bottom, 0px));
@@ -91,6 +92,30 @@
   button.ghost { background: var(--panel); color: var(--fg); border: 1px solid var(--line); font-weight: 500; }
   button.ghost.confirm { background: var(--stop); color: var(--on-accent); border-color: var(--stop); font-weight: 700; font-size: 16px; }
   button.small { min-height: 48px; font-size: 15px; font-weight: 500; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  .settings { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; text-align: left; }
+  .settings summary {
+    display: flex; align-items: center; gap: 10px; min-height: 48px;
+    font-size: 15px; font-weight: 500; cursor: pointer; list-style: none;
+  }
+  .settings summary::-webkit-details-marker { display: none; }
+  .settings summary::after { content: "▾"; margin-left: auto; color: var(--muted); }
+  .settings[open] summary::after { content: "▴"; }
+  .settings .cur { font-family: var(--font-num); font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .settings .body { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; }
+  .fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .fields label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  .fields input {
+    width: 100%; min-height: 48px; padding: 0 6px; text-align: center;
+    font-family: var(--font-num); font-weight: 600; font-size: 19px; font-variant-numeric: tabular-nums;
+    color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    -webkit-user-select: text; user-select: text;
+  }
+  .fields input:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+  .fields input:disabled { opacity: .55; }
+  .hint { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+  .hint.err { color: var(--stop); font-weight: 700; }
 
   .note {
     margin: 0; padding: 10px 12px; text-align: left; font-size: 13px; line-height: 1.65; color: var(--muted);
@@ -123,6 +148,18 @@
       <button id="reset" type="button" class="ghost">重設</button>
     </div>
     <button id="test" type="button" class="ghost small">試聽鈴聲（使用前先按一次）</button>
+    <details class="settings" id="settings">
+      <summary>時間設定 <span class="cur" id="setSummary"></span></summary>
+      <div class="body">
+        <div class="fields">
+          <label for="m0">第 1 聲（分）<input id="m0" type="number" inputmode="decimal" min="0" max="600" step="any"></label>
+          <label for="m1">第 2 聲（分）<input id="m1" type="number" inputmode="decimal" min="0" max="600" step="any"></label>
+          <label for="m2">第 3 聲（分）<input id="m2" type="number" inputmode="decimal" min="0" max="600" step="any"></label>
+        </div>
+        <p class="hint" id="setHint" aria-live="polite"></p>
+        <button id="defaults" type="button" class="ghost small">恢復預設 11 · 12 · 15</button>
+      </div>
+    </details>
     <p class="note">
       計時中請<b>讓這個頁面停在螢幕上</b>，頁面會自動防止螢幕變暗。手機鎖定螢幕或切到別的 App 時，瀏覽器會暫停，鈴聲不會響。
       <span class="keys">鍵盤：空白鍵開始／暫停，R 重設。</span>
@@ -132,14 +169,16 @@
 
 <script>
 (() => {
-  // 鈴響時間（分鐘）
-  const BELLS_MIN = [11, 12, 15];
+  // 預設鈴響時間（分鐘），可在「時間設定」修改
+  const DEFAULT_MIN = [11, 12, 15];
+  const MAX_MIN = 600;
   const RING_SECONDS = 1.5;
   const STORE_KEY = "bell-timer-state";
+  const BELLS_KEY = "bell-timer-bells";
+  const DEFAULT_HINT = "可輸入小數，例如 7.5 分＝7 分 30 秒。";
 
   const $ = id => document.getElementById(id);
-  const bells = BELLS_MIN.map(m => Math.round(m * 60));
-  const total = bells[bells.length - 1];
+  let bellsMin = DEFAULT_MIN.slice(), bells = [], total = 0;
 
   let elapsedBefore = 0;   // 暫停前累積秒數
   let startedAt = null;    // Date.now() 起點；暫停時為 null
@@ -168,11 +207,57 @@
   }
 
   // ===== 介面 =====
-  document.documentElement.style.setProperty("--n", bells.length);
-  bells.forEach((b, i) => {
-    $("track").insertAdjacentHTML("beforeend", `<div class="tick" style="left:${b / total * 100}%"></div>`);
-    $("bells").insertAdjacentHTML("beforeend",
-      `<div class="bell" id="bell${i}"><div class="t">${fmt(b)}</div><div class="s" id="bs${i}">第 ${i + 1} 次</div></div>`);
+  function applyBells(mins) {
+    bellsMin = mins;
+    bells = mins.map(m => Math.round(m * 60));
+    total = bells[bells.length - 1];
+    document.documentElement.style.setProperty("--n", bells.length);
+    $("track").querySelectorAll(".tick").forEach(t => t.remove());
+    $("bells").innerHTML = "";
+    bells.forEach((b, i) => {
+      $("track").insertAdjacentHTML("beforeend", `<div class="tick" style="left:${b / total * 100}%"></div>`);
+      $("bells").insertAdjacentHTML("beforeend",
+        `<div class="bell" id="bell${i}"><div class="t">${fmt(b)}</div><div class="s" id="bs${i}">第 ${i + 1} 次</div></div>`);
+    });
+    $("setSummary").textContent = bells.map(fmt).join(" · ");
+  }
+
+  // ===== 時間設定（只在還沒開始計時時可改） =====
+  const inputs = DEFAULT_MIN.map((_, i) => $("m" + i));
+  function checkMins(v) {
+    if (v.some(m => !Number.isFinite(m) || m <= 0)) return "請輸入大於 0 的分鐘數";
+    if (v.some(m => m > MAX_MIN)) return `最多 ${MAX_MIN} 分鐘`;
+    const s = v.map(m => Math.round(m * 60));
+    if (s.some((x, i) => i > 0 && x <= s[i - 1])) return "三次鈴響的時間要由小到大";
+    return "";
+  }
+  function loadBells() {
+    try {
+      const v = JSON.parse(localStorage.getItem(BELLS_KEY) || "null");
+      if (Array.isArray(v) && v.length === DEFAULT_MIN.length && !checkMins(v)) return v;
+    } catch {}
+    return DEFAULT_MIN.slice();
+  }
+  function fillInputs() { inputs.forEach((el, i) => { el.value = String(bellsMin[i]); }); }
+  function setHint(text, err) {
+    $("setHint").textContent = text;
+    $("setHint").classList.toggle("err", !!err);
+  }
+  function setBells(mins, msg) {
+    applyBells(mins);
+    try { localStorage.setItem(BELLS_KEY, JSON.stringify(mins)); } catch {}
+    save();
+    setHint(msg);
+  }
+  inputs.forEach(el => el.addEventListener("input", () => {
+    const v = inputs.map(x => (x.value.trim() === "" ? NaN : Number(x.value)));
+    const err = checkMins(v);
+    if (err) return setHint(`${err}（目前仍是 ${bells.map(fmt).join(" · ")}）`, true);
+    setBells(v, "已套用，按「開始」就照這個時間響。");
+  }));
+  $("defaults").addEventListener("click", () => {
+    setBells(DEFAULT_MIN.slice(), "已恢復預設 11 · 12 · 15。");
+    fillInputs();
   });
 
   // ===== 聲音（瀏覽器即時合成，不需音檔） =====
@@ -296,6 +381,12 @@
   }
   function updateButtons() {
     $("start").textContent = startedAt !== null ? "暫停" : elapsedBefore > 0 ? "繼續" : "開始";
+    const locked = startedAt !== null || elapsedBefore > 0;
+    inputs.forEach(el => { el.disabled = locked; });
+    $("defaults").disabled = locked;
+    if (locked) { fillInputs(); setHint("計時中不能修改，按「重設」後再調整。"); }
+    else if ($("setHint").textContent === "" || $("setHint").dataset.locked) setHint(DEFAULT_HINT);
+    $("setHint").dataset.locked = locked ? "1" : "";
   }
 
   $("start").addEventListener("click", () => (startedAt === null ? start() : pause()));
@@ -307,6 +398,7 @@
     try { navigator.vibrate?.([300, 150, 300]); } catch {}
   });
   document.addEventListener("keydown", e => {
+    if (e.target.closest?.("input, summary")) return;
     if (e.code === "Space") { e.preventDefault(); $("start").click(); }
     if (e.key === "r" || e.key === "R") requestReset();
   });
@@ -356,6 +448,8 @@
     requestAnimationFrame(render);
   }
 
+  applyBells(loadBells());
+  fillInputs();
   load();
   updateButtons();
   render();
